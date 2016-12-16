@@ -54,13 +54,13 @@ impl <'a> GeneratorContext<'a> {
             for import in imports.iter() {
                 let importpath = ::std::path::Path::new(try!(import.get_name()));
                 let root_name: String = format!(
-                    "::{}_capnp",
+                    "::{0}::protocol",
                     try!(path_to_stem_string(importpath)).replace("-", "_"));
                 try!(populate_scope_map(&gen.node_map, &mut gen.scope_map, vec!(root_name), import.get_id()));
             }
 
             let root_name = try!(path_to_stem_string(try!(requested_file.get_filename())));
-            let root_mod = format!("::{}_capnp", root_name.replace("-", "_"));
+            let root_mod = format!("::{0}::protocol", root_name.replace("-", "_"));
             try!(populate_scope_map(&gen.node_map, &mut gen.scope_map, vec!(root_mod), id));
         }
         Ok(gen)
@@ -1773,7 +1773,8 @@ pub fn main<T>(mut inp: T, out_dir: &::std::path::Path) -> ::capnp::Result<()>
     for requested_file in try!(gen.request.get_requested_files()).iter() {
         let id = requested_file.get_id();
         let mut filepath = out_dir.to_path_buf();
-        let requested = ::std::path::PathBuf::from(try!(requested_file.get_filename()));
+        let mut requested = out_dir.to_path_buf();
+        requested.push(::std::path::PathBuf::from(try!(requested_file.get_filename())));
         if let Some(parent) = requested.parent() {
             try!(::std::fs::create_dir_all(parent));
             filepath.push(parent);
