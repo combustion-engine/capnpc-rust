@@ -80,19 +80,19 @@ fn run_command(mut command: ::std::process::Command) -> ::capnp::Result<()> {
     }
 }
 
-#[deprecated(since="0.7.4", note="please use `CompilerCommand` instead")]
+#[deprecated(since = "0.7.4", note = "please use `CompilerCommand` instead")]
 #[allow(deprecated)]
 pub fn compile<P1, P2>(src_prefix: P1, files: &[P2]) -> ::capnp::Result<()>
-    where P1: AsRef<Path>, P2: AsRef<Path>
+                       where P1: AsRef<Path>, P2: AsRef<Path>
 {
     compile_with_src_prefixes(&[src_prefix], files)
 }
 
 // TODO(version bump): We should have only one `compile` function and it should allow
 // multiple --src-prefix flags to be set. Possibly we should use the "builder pattern".
-#[deprecated(since="0.7.4", note="please use `CompilerCommand` instead")]
+#[deprecated(since = "0.7.4", note = "please use `CompilerCommand` instead")]
 pub fn compile_with_src_prefixes<P1, P2>(src_prefixes: &[P1], files: &[P2]) -> ::capnp::Result<()>
-    where P1: AsRef<Path>, P2: AsRef<Path>
+                                         where P1: AsRef<Path>, P2: AsRef<Path>
 {
     let mut command = CompilerCommand::new();
     for src_prefix in src_prefixes {
@@ -110,6 +110,7 @@ pub fn compile_with_src_prefixes<P1, P2>(src_prefixes: &[P1], files: &[P2]) -> :
 pub struct CompilerCommand {
     files: Vec<PathBuf>,
     src_prefixes: Vec<PathBuf>,
+    includes: Vec<PathBuf>,
 }
 
 impl CompilerCommand {
@@ -118,12 +119,13 @@ impl CompilerCommand {
         CompilerCommand {
             files: Vec::new(),
             src_prefixes: Vec::new(),
+            includes: Vec::new(),
         }
     }
 
     /// Adds a file to be compiled.
     pub fn file<'a, P>(&'a mut self, path: P) -> &'a mut CompilerCommand
-        where P: AsRef<Path>,
+                       where P: AsRef<Path>,
     {
         self.files.push(path.as_ref().to_path_buf());
         self
@@ -132,16 +134,28 @@ impl CompilerCommand {
     /// Adds a --src-prefix flag. For all files specified for compilation that start
     /// with `prefix`, removes the prefix when computing output filenames.
     pub fn src_prefix<'a, P>(&'a mut self, prefix: P) -> &'a mut CompilerCommand
-        where P: AsRef<Path>,
+                             where P: AsRef<Path>,
     {
         self.src_prefixes.push(prefix.as_ref().to_path_buf());
+        self
+    }
+
+    pub fn include<'a, P>(&'a mut self, path: P) -> &'a mut CompilerCommand
+                          where P: AsRef<Path>
+    {
+        self.includes.push(path.as_ref().to_path_buf());
         self
     }
 
     /// Runs the command.
     pub fn run(&mut self) -> ::capnp::Result<()> {
         let mut command = ::std::process::Command::new("capnp");
-        command.arg("compile").arg("-o").arg("-");
+        command.arg("compile").arg("-o-");
+
+        for include in &self.includes {
+            command.arg(&format!("-I{}", include.display()));
+        }
+
         for src_prefix in &self.src_prefixes {
             command.arg(&format!("--src-prefix={}", src_prefix.display()));
         }
@@ -158,6 +172,7 @@ impl CompilerCommand {
                 "Error while trying to execute `capnp compile`: {}.  \
                  Please verify that version 0.5.2 or higher of the capnp executable \
                  is installed on your system. See https://capnproto.org/install.html",
-                error))})
+                error))
+        })
     }
 }
