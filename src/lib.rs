@@ -84,7 +84,8 @@ fn run_command(mut command: ::std::process::Command) -> ::capnp::Result<()> {
 pub struct CompilerCommand {
     files: Vec<PathBuf>,
     src_prefixes: Vec<PathBuf>,
-    includes: Vec<PathBuf>,
+    import_paths: Vec<PathBuf>,
+    no_standard_import: bool,
 }
 
 impl CompilerCommand {
@@ -93,13 +94,14 @@ impl CompilerCommand {
         CompilerCommand {
             files: Vec::new(),
             src_prefixes: Vec::new(),
-            includes: Vec::new(),
+            import_paths: Vec::new(),
+            no_standard_import: false,
         }
     }
 
     /// Adds a file to be compiled.
     pub fn file<'a, P>(&'a mut self, path: P) -> &'a mut CompilerCommand
-                       where P: AsRef<Path>,
+        where P: AsRef<Path>,
     {
         self.files.push(path.as_ref().to_path_buf());
         self
@@ -108,26 +110,40 @@ impl CompilerCommand {
     /// Adds a --src-prefix flag. For all files specified for compilation that start
     /// with `prefix`, removes the prefix when computing output filenames.
     pub fn src_prefix<'a, P>(&'a mut self, prefix: P) -> &'a mut CompilerCommand
-                             where P: AsRef<Path>,
+        where P: AsRef<Path>,
     {
         self.src_prefixes.push(prefix.as_ref().to_path_buf());
         self
     }
 
-    pub fn include<'a, P>(&'a mut self, path: P) -> &'a mut CompilerCommand
-                          where P: AsRef<Path>
+    /// Adds an --import_path flag. Adds `dir` to the list of directories searched
+    /// for absolute imports.
+    pub fn import_path<'a, P>(&'a mut self, dir: P) -> &'a mut CompilerCommand
+        where P: AsRef<Path>,
     {
-        self.includes.push(path.as_ref().to_path_buf());
+        self.import_paths.push(dir.as_ref().to_path_buf());
+        self
+    }
+
+    /// Adds the --no-standard-import flag, indicating that the default import paths of
+    /// /usr/include and /usr/local/include should not bet included.
+    pub fn no_standard_import<'a>(&'a mut self) -> &'a mut CompilerCommand {
+        self.no_standard_import = true;
         self
     }
 
     /// Runs the command.
     pub fn run(&mut self) -> ::capnp::Result<()> {
         let mut command = ::std::process::Command::new("capnp");
-        command.arg("compile").arg("-o-");
 
-        for include in &self.includes {
-            command.arg(&format!("-I{}", include.display()));
+        command.arg("compile").arg("-o").arg("-");
+
+        if self.no_standard_import {
+            command.arg("--no-standard-import");
+        }
+
+        for import_path in &self.import_paths {
+            command.arg(&format!("--import-path={}", import_path.display()));
         }
 
         for src_prefix in &self.src_prefixes {

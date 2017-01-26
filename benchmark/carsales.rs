@@ -21,22 +21,16 @@
 
 use rand::*;
 use common::*;
-use carsales_capnp::*;
-
-pub type RequestBuilder<'a> = parking_lot::Builder<'a>;
-pub type RequestReader<'a> = parking_lot::Reader<'a>;
-pub type ResponseBuilder<'a> = total_value::Builder<'a>;
-pub type ResponseReader<'a> = total_value::Reader<'a>;
-pub type Expectation = u64;
+use carsales_capnp::{parking_lot, total_value, Color, car};
 
 trait CarValue {
-    fn car_value(self) -> u64;
+    fn car_value(self) -> ::capnp::Result<u64>;
 }
 
 macro_rules! car_value_impl(
     ($typ:ident) => (
             impl <'a> CarValue for car::$typ<'a> {
-                fn car_value (mut self) -> u64 {
+                fn car_value (mut self) -> ::capnp::Result<u64> {
                     #![allow(unused_mut)]
                     let mut result : u64 = 0;
                     result += self.borrow().get_seats() as u64 * 200;
@@ -45,7 +39,7 @@ macro_rules! car_value_impl(
                     // Using an iterator here slows things down considerably.
                     // TODO: investigate why.
                     {
-                        let mut wheels = self.borrow().get_wheels().unwrap();
+                        let mut wheels = try!(self.borrow().get_wheels());
                         for ii in 0..wheels.len() {
                             let mut wheel = wheels.borrow().get(ii);
                             result += wheel.borrow().get_diameter() as u64 * wheel.borrow().get_diameter() as u64;
@@ -57,7 +51,7 @@ macro_rules! car_value_impl(
                         self.borrow().get_width() as u64 * self.borrow().get_height() as u64 / 50;
 
                     {
-                        let mut engine = self.borrow().get_engine().unwrap();
+                        let mut engine = try!(self.borrow().get_engine());
                         result += engine.borrow().get_horsepower() as u64 * 40;
                         if engine.borrow().get_uses_electric() {
                             if engine.borrow().get_uses_gas() {
@@ -76,7 +70,7 @@ macro_rules! car_value_impl(
 
                     result += self.borrow().get_cup_holders() as u64 * 25;
 
-                    return result;
+                    Ok(result)
                 }
             }
         )
@@ -88,7 +82,7 @@ car_value_impl!(Builder);
 const MAKES : [&'static str; 5] = ["Toyota", "GM", "Ford", "Honda", "Tesla"];
 const MODELS : [&'static str; 6] = ["Camry", "Prius", "Volt", "Accord", "Leaf", "Model S"];
 
-pub fn random_car(rng : &mut FastRand, mut car : car::Builder) {
+pub fn random_car(rng: &mut FastRand, mut car: car::Builder) {
     use std::mem::transmute;
 
     car.set_make(MAKES[rng.next_less_than(MAKES.len() as u32) as usize]);
@@ -135,29 +129,44 @@ pub fn random_car(rng : &mut FastRand, mut car : car::Builder) {
     car.set_has_nav_system(rng.gen());
 }
 
-pub fn setup_request(rng : &mut FastRand, request : parking_lot::Builder) -> u64 {
-    let mut result = 0;
-    let mut cars = request.init_cars(rng.next_less_than(200));
-    for ii in 0..cars.len() {
-        {
-            let car = cars.borrow().get(ii);
-            random_car(rng, car);
+pub struct CarSales;
+
+impl ::TestCase for CarSales {
+    type Request = parking_lot::Owned;
+    type Response = total_value::Owned;
+    type Expectation = u64;
+
+    fn setup_request(&self, rng: &mut FastRand, request: parking_lot::Builder) -> u64 {
+        let mut result = 0;
+        let mut cars = request.init_cars(rng.next_less_than(200));
+        for ii in 0..cars.len() {
+            {
+                let car = cars.borrow().get(ii);
+                random_car(rng, car);
+            }
+            result += cars.borrow().get(ii).car_value().unwrap();
         }
-        result += cars.borrow().get(ii).car_value();
+
+        result
     }
 
-    result
-}
-
-pub fn handle_request(request : parking_lot::Reader, mut response : total_value::Builder) {
-    let mut result = 0;
-    for car in request.get_cars().unwrap().iter() {
-        result += car.car_value();
+    fn handle_request(&self, request: parking_lot::Reader, mut response: total_value::Builder)
+                      -> ::capnp::Result<()>
+    {
+        let mut result = 0;
+        for car in try!(request.get_cars()).iter() {
+            result += try!(car.car_value());
+        }
+        response.set_amount(result);
+        Ok(())
     }
-    response.set_amount(result);
-}
 
-#[inline]
-pub fn check_response(response : total_value::Reader, expected : u64) -> bool {
-    response.get_amount() == expected
+    fn check_response(&self, response: total_value::Reader, expected: u64) -> ::capnp::Result<()> {
+        if response.get_amount() == expected {
+            Ok(())
+        } else {
+            Err(::capnp::Error::failed(
+                format!("check_response() expected {} but got {}", expected, response.get_amount())))
+        }
+    }
 }
