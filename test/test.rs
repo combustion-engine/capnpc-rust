@@ -857,7 +857,7 @@ mod tests {
         match message.get_root::<::test_capnp::test_all_types::Reader>() {
             Ok(_) => panic!("expected out-of-bounds error"),
             Err(e) => {
-                assert_eq!(e.description, "Message contained out-of-bounds far pointer.");
+                assert_eq!(e.description, "message contained out-of-bounds pointer")
             }
         }
     }
@@ -887,7 +887,7 @@ mod tests {
         match message.get_root::<::test_capnp::test_all_types::Reader>() {
             Ok(_) => panic!("expected out-of-bounds error"),
             Err(e) => {
-                assert_eq!(e.description, "Message contained out-of-bounds struct pointer.");
+                assert_eq!(e.description, "message contained out-of-bounds pointer")
             }
         }
     }
@@ -939,7 +939,23 @@ mod tests {
         match builder_root.get_any_pointer_field().set_as(root) {
             Err(e) =>
                 assert_eq!("InlineComposite list's elements overrun its word count.", e.description),
-            _ => panic!("did ont get expected error"),
+            _ => panic!("did not get expected error"),
+        }
+    }
+
+    #[test]
+    fn traversal_limit_exceeded() {
+        use test_capnp::{test_all_types};
+
+        let mut message = message::Builder::new_default();
+        ::test_util::init_test_message(message.init_root());
+
+        let segments = message.get_segments_for_output();
+        let reader = message::Reader::new(message::SegmentArray::new(&segments),
+                                          *ReaderOptions::new().traversal_limit_in_words(2));
+        match reader.get_root::<test_all_types::Reader>() {
+            Err(e) => assert_eq!(e.description, "read limit exceeded"),
+            Ok(_) => panic!("expected error"),
         }
     }
 
