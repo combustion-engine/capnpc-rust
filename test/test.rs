@@ -581,6 +581,50 @@ mod tests {
     }
 
     #[test]
+    fn test_generic_union() {
+        use capnp::primitive_list;
+        use test_capnp::{test_generics_union, test_all_types};
+        let mut message = message::Builder::new_default();
+        {
+            let mut root: test_generics_union::Builder<test_all_types::Owned, primitive_list::Owned<u32>>
+                = message.init_root();
+            {
+                let mut bar = root.borrow().initn_bar1(10);
+                bar.set(5, 100);
+            }
+            assert!(!root.has_foo1());
+            assert!(root.has_bar1());
+            assert!(!root.has_foo2());
+
+            match root.borrow().which().unwrap() {
+                test_generics_union::Bar1(Ok(bar)) => {
+                    assert_eq!(bar.len(), 10);
+                    assert_eq!(bar.get(0), 0);
+                    assert_eq!(bar.get(5), 100);
+                    assert_eq!(bar.get(9), 0);
+                }
+                _ => panic!("expected Bar1"),
+            }
+
+            {
+                let mut foo = root.borrow().init_foo2();
+                foo.set_int32_field(37);
+            }
+
+            assert!(!root.has_foo1());
+            assert!(!root.has_bar1());
+            assert!(root.has_foo2());
+
+            match root.borrow().which().unwrap() {
+                test_generics_union::Foo2(Ok(foo)) => {
+                    assert_eq!(foo.get_int32_field(), 37);
+                }
+                _ => panic!("expected Foo2"),
+            }
+        }
+    }
+
+    #[test]
     fn test_union() {
         use test_capnp::test_union;
 
@@ -940,6 +984,97 @@ mod tests {
             Err(e) =>
                 assert_eq!("InlineComposite list's elements overrun its word count.", e.description),
             _ => panic!("did not get expected error"),
+        }
+    }
+
+    #[test]
+    fn long_u64_list() {
+        use test_capnp::{test_all_types};
+
+        let length: u32 = 1 << 27;
+        let step_exponent = 18;
+
+        let mut message = message::Builder::new_default();
+        {
+            let root: test_all_types::Builder = message.init_root();
+            let mut list = root.init_u_int64_list(length);
+            for ii in 0..(length >> step_exponent) {
+                let jj = ii << step_exponent;
+                list.set(jj, jj as u64);
+            }
+            for ii in 0..(length >> step_exponent) {
+                let jj = ii << step_exponent;
+                assert_eq!(list.get(jj), jj as u64);
+            }
+        }
+
+        let root: test_all_types::Reader = message.get_root_as_reader().unwrap();
+        let list = root.get_u_int64_list().unwrap();
+        for ii in 0..(length >> step_exponent) {
+            let jj = ii << step_exponent;
+            assert_eq!(list.get(jj), jj as u64);
+        }
+    }
+
+    #[test]
+    fn long_struct_list() {
+        use test_capnp::{test_lists};
+
+        let length: u32 = 1 << 27;
+        let step_exponent = 18;
+
+        let mut message = message::Builder::new_default();
+        {
+            let root: test_lists::Builder = message.init_root();
+            let mut list = root.init_list64(length);
+            for ii in 0..(length >> step_exponent) {
+                let jj = ii << step_exponent;
+                list.borrow().get(jj).set_f(jj as u64);
+            }
+            for ii in 0..(length >> step_exponent) {
+                let jj = ii << step_exponent;
+                assert_eq!(list.borrow().get(jj).get_f(), jj as u64);
+            }
+        }
+
+        let root: test_lists::Reader = message.get_root_as_reader().unwrap();
+        let list = root.get_list64().unwrap();
+        for ii in 0..(length >> step_exponent) {
+            let jj = ii << step_exponent;
+            assert_eq!(list.get(jj).get_f(), jj as u64);
+        }
+    }
+
+    #[test]
+    fn long_list_list() {
+        use test_capnp::{test_lists};
+
+        let length: u32 = 1 << 27;
+        let step_exponent = 18;
+
+        let mut message = message::Builder::new_default();
+        {
+            let root: test_lists::Builder = message.init_root();
+            let mut list = root.init_int32_list_list(length);
+            for ii in 0..(length >> step_exponent) {
+                let jj = ii << step_exponent;
+                list.borrow().init(jj, 1).set(0, jj as i32);
+            }
+            for ii in 0..(length >> step_exponent) {
+                let jj = ii << step_exponent;
+                let elem = list.borrow().get(jj).unwrap();
+                assert_eq!(elem.len(), 1);
+                assert_eq!(elem.get(0), jj as i32);
+            }
+        }
+
+        let root: test_lists::Reader = message.get_root_as_reader().unwrap();
+        let list = root.get_int32_list_list().unwrap();
+        for ii in 0..(length >> step_exponent) {
+            let jj = ii << step_exponent;
+            let elem = list.get(jj).unwrap();
+            assert_eq!(elem.len(), 1);
+            assert_eq!(elem.get(0), jj as i32);
         }
     }
 
