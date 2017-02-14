@@ -1334,7 +1334,7 @@ fn generate_node(gen: &GeneratorContext,
             for ii in 0..enumerants.len() {
                 let enumerant = capitalize_first_letter(try!(enumerants.get(ii).get_name()));
                 members.push(Branch(vec![
-                    Line(format!("#[serde(rename = {})]", enumerant.to_lowercase())),
+                    Line(format!(r#"#[serde(rename = "{}")]"#, enumerant.to_lowercase())),
                     Line(format!("{} = {},", enumerant, ii)),
                 ]));
                 match_branches.push(
