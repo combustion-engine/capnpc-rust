@@ -1333,7 +1333,10 @@ fn generate_node(gen: &GeneratorContext,
             let enumerants = try!(enum_reader.get_enumerants());
             for ii in 0..enumerants.len() {
                 let enumerant = capitalize_first_letter(try!(enumerants.get(ii).get_name()));
-                members.push(Line(format!("{} = {},", enumerant, ii)));
+                members.push(Branch(vec![
+                    Line(format!("#[serde(rename = {})]", enumerant.to_lowercase())),
+                    Line(format!("{} = {},", enumerant, ii)),
+                ]));
                 match_branches.push(
                     Line(format!("{} => ::std::result::Result::Ok({}::{}),", ii, last_name, enumerant)));
             }
