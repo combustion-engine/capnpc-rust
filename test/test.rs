@@ -764,8 +764,57 @@ mod tests {
                 assert_eq!(3, l.len());
                 assert_eq!("foo", &*l.borrow().get(0).get_f().unwrap());
                 assert_eq!("bar", &*l.borrow().get(1).get_f().unwrap());
-//                assert_eq!("baz", l.borrow().get(2).get_f());
+                assert_eq!("baz", &*l.borrow().get(2).get_f().unwrap());
             }
+        }
+    }
+
+    #[test]
+    fn upgrade_struct_list() {
+        use capnp::struct_list;
+        use test_capnp::{test_old_version, test_new_version};
+
+        let segment0: &[::capnp::Word] = &[
+            capnp_word!(1,0,0,0,0x1f,0,0,0), // list, inline composite, 3 words
+            capnp_word!(4, 0, 0, 0, 1, 0, 2, 0), // struct tag. 1 element, 1 word data, 2 pointers.
+            capnp_word!(0xab,0,0,0,0,0,0,0),
+            capnp_word!(0x05,0,0,0, 0x42,0,0,0), // list pointer, offset 1, type = BYTE, length 8.
+            capnp_word!(0,0,0,0,0,0,0,0),
+            capnp_word!(0x68,0x65,0x6c,0x6c,0x6f,0x21,0x21,0), // "hello!!"
+        ];
+
+        let segment_array = &[segment0];
+        let message_reader =
+            message::Reader::new(message::SegmentArray::new(segment_array), ReaderOptions::new());
+
+        let old_version: struct_list::Reader<test_old_version::Owned> = message_reader.get_root().unwrap();
+        assert_eq!(old_version.len(), 1);
+        assert_eq!(old_version.get(0).get_old1(), 0xab);
+        assert_eq!(old_version.get(0).get_old2().unwrap(), "hello!!");
+
+        // Make the first segment exactly large enough to fit the original message.
+        // This leaves no room for a far pointer landing pad in the first segment.
+        let allocator = message::HeapAllocator::new().first_segment_words(6);
+
+        let mut message = message::Builder::new(allocator);
+        message.set_root(old_version).unwrap();
+        {
+            let segments = message.get_segments_for_output();
+            assert_eq!(segments.len(), 1);
+            assert_eq!(segments[0].len(), 6);
+        }
+
+        {
+            let mut new_version: struct_list::Builder<test_new_version::Owned> = message.get_root().unwrap();
+            assert_eq!(new_version.len(), 1);
+            assert_eq!(new_version.borrow().get(0).get_old1(), 0xab);
+            assert_eq!(&*new_version.borrow().get(0).get_old2().unwrap(), "hello!!");
+        }
+
+        {
+            let segments = message.get_segments_for_output();
+            // Check the the old list, including the tag, was zeroed.
+            assert_eq!(::capnp::Word::words_to_bytes(&segments[0][1..5]), &[0; 32][..]);
         }
 
     }
@@ -779,7 +828,6 @@ mod tests {
         ::test_util::CheckTestMessage::check_test_message(message.get_root::<test_all_types::Builder>().unwrap());
         ::test_util::CheckTestMessage::check_test_message(
             message.get_root::<test_all_types::Builder>().unwrap().as_reader());
-
     }
 
     #[test]
@@ -935,6 +983,25 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn far_pointer_pointing_at_self() {
+        use test_capnp::test_all_types;
+
+        let words: &[::capnp::Word] =
+            &[capnp_word!(0,0,0,0,0,0,1,0), // struct, one pointer
+              capnp_word!(0xa,0,0,0,0,0,0,0)]; // far pointer, points to self
+        let segment_array = &[words];
+
+        let message_reader =
+            message::Reader::new(message::SegmentArray::new(segment_array), ReaderOptions::new());
+
+        let reader = message_reader.get_root::<test_all_types::Reader>().unwrap();
+        assert!(reader.total_size().is_err());
+        let mut builder = ::capnp::message::Builder::new_default();
+        assert!(builder.set_root(reader).is_err());
+    }
+
 
     #[test]
     fn text_builder_int_underflow() {
@@ -1125,16 +1192,44 @@ mod tests {
             let _ : ::capnp::struct_list::Builder<test_empty_struct::Owned> =
                 root.get_any_pointer_field().initn_as((1 << 29) - 1);
         }
-        let segments = message.get_segments_for_output();
-        assert_eq!(segments.len(), 1);
-        assert_eq!(segments[0].len(), 3);
+        {
+            let segments = message.get_segments_for_output();
+            assert_eq!(segments.len(), 1);
+            assert_eq!(segments[0].len(), 3);
 
-        let reader =
-            message::Reader::new(message::SegmentArray::new(&segments),
-                                 ReaderOptions::new());
-        let root = reader.get_root::<test_any_pointer::Reader>().unwrap();
-        let result = root.get_any_pointer_field().get_as::<::capnp::struct_list::Reader<test_all_types::Owned>>();
-        assert!(result.is_err());
+            let reader =
+                message::Reader::new(message::SegmentArray::new(&segments),
+                                     ReaderOptions::new());
+            let root = reader.get_root::<test_any_pointer::Reader>().unwrap();
+            let result = root.get_any_pointer_field().get_as::<::capnp::struct_list::Reader<test_all_types::Owned>>();
+            assert!(result.is_err());
+        }
+
+        // At one point this took a long time because zero_object_helper() would iterate through
+        // the whole list, even though its elements were void.
+        message.init_root::<test_any_pointer::Builder>();
+    }
+
+    #[test]
+    fn total_size_struct_list_amplification() {
+        use test_capnp::test_any_pointer;
+
+        let words: &[::capnp::Word] =
+            &[capnp_word!(0,0,0,0, 0,0,1,0), // struct, one pointers
+              capnp_word!(1,0,0,0, 0xf,0,0,0), // list, inline composite, one word
+              capnp_word!(0,0x80,0xc2,0xff, 0,0,0,0), // large struct, but zero of them
+              capnp_word!(0,0,0x20,0, 0,0,0x22,0),
+            ];
+        let segment_array = &[words];
+
+        let message_reader =
+            message::Reader::new(message::SegmentArray::new(segment_array), ReaderOptions::new());
+
+        let reader = message_reader.get_root::<test_any_pointer::Reader>().unwrap();
+        reader.total_size().unwrap();
+
+        let mut builder = ::capnp::message::Builder::new_default();
+        assert!(builder.set_root(reader).is_err()); // read limit exceeded
     }
 
     #[test]
@@ -1164,4 +1259,5 @@ mod tests {
     fn pipeline_any_pointer(foo: ::test_capnp::test_any_pointer::Pipeline) {
         let _ = foo.get_any_pointer_field();
     }
+
 }
